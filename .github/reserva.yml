@@ -1,0 +1,50 @@
+name: Bot de Reservas UPC
+
+on:
+  # PPermite la ejecución manual desde la pestaña de Actions para pruebas rápidas
+  workflow_dispatch:
+  
+  # Activador mediante webhook externo (cron-job.org)
+  repository_dispatch:
+    types: [trigger_reserva]
+
+  push:
+    branches:
+      - main
+
+jobs:
+  ejecutar-bot:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+    - name: 1. Clonar el código del repositorio
+      uses: actions/checkout@v4
+
+    - name: 2. Configurar entorno de Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: 3. Instalar dependencias
+      run: npm install
+
+    - name: 4. Ejecutar el Script de Reserva
+      env:
+        UPC_CORREO: ${{ secrets.UPC_CORREO }}
+        UPC_PASSWORD: ${{ secrets.UPC_PASSWORD }}
+        COMPANERO_NOMBRE: ${{ secrets.COMPANERO_NOMBRE }}
+        COMPANERO_CODIGO: ${{ secrets.COMPANERO_CODIGO }}
+        HORA_INICIO: ${{ secrets.HORA_INICIO }}
+        HORA_FIN: ${{ secrets.HORA_FIN }}
+        SAVED_COOKIES: ${{ secrets.SAVED_COOKIES }}
+      run: node index.js
+
+    - name: 5. Subir capturas de pantalla (Artifacts)
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: evidencias-ejecucion
+        path: "*.png"
+        retention-days: 3

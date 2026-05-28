@@ -1,0 +1,24 @@
+{
+  "name": "upc-bot-reserva",
+  "version": "1.0.0",
+  "description": "Sistema automatizado de reservas de cubículos UPC evadiendo 2FA",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "cookies": "node generate-cookies.js"
+  },
+  "keywords": [
+    "puppeteer",
+    "bot",
+    "automation",
+    "upc"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "puppeteer": "^25.1.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  }
+}

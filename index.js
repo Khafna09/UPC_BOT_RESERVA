@@ -1,0 +1,187 @@
+require('dotenv').config();
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const fs = require('fs');
+puppeteer.use(StealthPlugin());
+
+const randomDelay = (min, max) => new Promise(r => setTimeout(r, Math.floor(Math.random() * (max - min + 1) + min)));
+const COOKIE_PATH = './cookies.json';
+
+(async () => {
+    console.log('Iniciando el bot de reserva automática...');
+
+    // Sincronización con la ventana de tiempo objetivo (00:00:05)
+    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Lima" }));
+    const target = new Date(now);
+
+    if (now.getHours() === 23) {
+        target.setDate(target.getDate() + 1);
+    }
+    target.setHours(0, 0, 5, 0);
+
+    const waitTime = target.getTime() - now.getTime();
+
+    if (waitTime > 0) {
+        console.log(`Esperando el momento ideal... Hibernando por ${Math.round(waitTime / 1000)}s hasta el disparo...`);
+        await new Promise(r => setTimeout(r, waitTime));
+    } else {
+        console.log(`Se pasó del tiempo. Ejecutando operación inmediata.`);
+    }
+
+    const browser = await puppeteer.launch({
+        headless: "new",
+        args: [
+            '--no-sandbox', 
+            '--disable-setuid-sandbox', 
+            '--disable-dev-shm-usage',
+            '--lang=es-PE,es' 
+        ]
+    });
+
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1920, height: 1080 });
+    await page.emulateTimezone('America/Lima');
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'es-PE,es,en;q=0.9' });
+
+    // Inyecta las cookies generadas y cargadas en las secret keys de github
+    let cookies = null;
+    if (process.env.SAVED_COOKIES) {
+        cookies = JSON.parse(process.env.SAVED_COOKIES);
+    } else if (fs.existsSync(COOKIE_PATH)) {
+        cookies = JSON.parse(fs.readFileSync(COOKIE_PATH));
+    }
+
+    if (cookies && cookies.length > 0) {
+        await page.setCookie(...cookies);
+    } else {
+        throw new Error("No se encontraron credenciales válidas. Ejecute generate-cookies.js primero o revise las cookies guardadas.");
+    }
+
+    try {
+        console.log('[LOG] Accediendo a la plataforma...');
+        await page.goto('https://bibliotecareserva.upc.edu.pe/r/new', { waitUntil: 'networkidle2' });
+
+        // Filtra a la sede de San Miguel, elije la opción de cubiculo y muestra de todas las áreas
+        await page.waitForSelector('#s-lc-location', { visible: true });
+        await page.select('#s-lc-location', '15560'); // San Miguel
+        await page.select('#s-lc-group', '33848');   // Grupo
+        await page.select('#s-lc-type', '3');        // Cubículo
+        await page.click('#s-lc-go');
+
+        // Cambia al dia que sigue (el que apenas se va a habilitar)
+        await page.waitForSelector('.fc-next-button', { visible: true });
+        await page.click('.fc-next-button');
+        await randomDelay(2000, 3000);
+
+        // Selecciona el bloque de la hora objetivo (ej: 20:00) y el bloque de hora fin (ej: 22:00)
+        const horaInicio = process.env.HORA_INICIO; 
+        const horaFin = process.env.HORA_FIN.toLowerCase();
+
+        let horaGringa = horaInicio;
+        let horaGringaEspacio = horaInicio;
+        if (horaInicio.includes(":")) {
+            let [h, m] = horaInicio.split(":");
+            let hi = parseInt(h);
+            let ampm = hi >= 12 ? 'pm' : 'am';
+            let h12 = hi % 12 || 12;
+            horaGringa = `${h12}:${m}${ampm}`; 
+            horaGringaEspacio = `${h12}:${m} ${ampm}`;
+        }
+
+        console.log(`[LOG] Escaneando disponibilidad de ${horaInicio}...`);
+        await page.waitForSelector('.s-lc-eq-avail, .s-lc-eq-unavail', { timeout: 15000 });
+        
+        const clickExitoso = await page.evaluate((h1, h2, h3) => {
+            const contenedores = document.querySelectorAll('.fc-scroller, .table-responsive, div[style*="overflow"]');
+            contenedores.forEach(c => c.scrollLeft = 9999);
+
+            const bloques = document.querySelectorAll('a.s-lc-eq-avail');
+            for (let b of bloques) {
+                const titulo = (b.getAttribute('title') || '').toLowerCase();
+                if (titulo.includes(h1) || titulo.includes(h2) || titulo.includes(h3)) {
+                    b.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+                    b.click();
+                    return true;
+                }
+            }
+            return false;
+        }, horaInicio, horaGringa, horaGringaEspacio);
+
+        if (!clickExitoso) {
+            throw new Error(`No hay disponibilidad de cubículos a las ${horaInicio}.`);
+        }
+
+        await randomDelay(1000, 1500);
+        await page.evaluate((horaFinBuscada) => {
+            const endSelect = document.querySelector('.b-end-date');
+            if (endSelect) {
+                for (let i = 0; i < endSelect.options.length; i++) {
+                    const text = endSelect.options[i].text.toLowerCase();
+                    if (text.includes(horaFinBuscada) || text.replace(/\s+/g, '').includes(horaFinBuscada.replace(/\s+/g, ''))) {
+                        endSelect.selectedIndex = i;
+                        endSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                        break;
+                    }
+                }
+            }
+        }, horaFin);
+
+        await randomDelay(1000, 1500);
+        await Promise.all([
+            page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => { }),
+            page.click('#submit_times')
+        ]);
+
+        // Validación de aprobación 2FA (Microsoft Authenticator)
+        await page.waitForFunction(() => {
+            const form = document.querySelector('#q18288');
+            const btnTerms = document.querySelector('#terms_accept');
+            const loginBtn = document.querySelector('#link-login');
+            return form || btnTerms || loginBtn;
+        }, { timeout: 20000 });
+
+        const isLoginRequired = await page.evaluate(() => document.querySelector('#link-login') !== null);
+        if (isLoginRequired) {
+            throw new Error("Sesión rechazada. Las cookies han caducado o el proveedor bloqueó el acceso.");
+        }
+
+        // Si aparece la página de términos, es señal de que el 2FA fue aprobado exitosamente
+        const isTermsPage = await page.$('#terms_accept') !== null;
+        if (isTermsPage) {
+            await Promise.all([
+                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => { }),
+                page.click('#terms_accept')
+            ]);
+        }
+
+        // Validación de acceso a formulario final
+        console.log('[LOG] Procesando payload final...');
+        await page.waitForSelector('#q18288', { visible: true, timeout: 15000 });
+        await page.select('#q18288', 'San Miguel');
+        await page.select('#q18305', 'Pregrado');
+        await page.select('#q18289', 'Ingeniería de Software');
+        await page.type('#q19110', process.env.COMPANERO_NOMBRE);
+        await page.type('#q19111', process.env.COMPANERO_CODIGO);
+
+        await Promise.all([
+            page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => { }),
+            page.click('#btn-form-submit')
+        ]);
+        
+        const isError = await page.evaluate(() => document.querySelector('.alert-danger') !== null);
+
+        if (!isError) {
+            console.log('\n Se reservó');
+            await page.screenshot({ path: 'reserva-EXITO.png', fullPage: true });
+        } else {
+            console.log('\n No se pudo reservar. Es probable que el sistema haya rechazado la solicitud o que el bloque ya no esté disponible.');
+            await page.screenshot({ path: 'reserva-FALLIDA.png', fullPage: true });
+        }
+
+    } catch (error) {
+        console.error('\n[ERROR FATAL]', error.message);
+        if (page) await page.screenshot({ path: 'debug-ERROR-FINAL.png', fullPage: true }).catch(() => {});
+    } finally {
+        await browser.close();
+    }
+})();
