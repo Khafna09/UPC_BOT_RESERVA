@@ -167,10 +167,17 @@ const COOKIE_PATH = './cookies.json';
         await page.click('#btn-form-submit');
 
         await page.waitForFunction(() => {
-            return document.querySelector('.alert-success') || document.querySelector('.alert-danger');
+            const errorEl = document.querySelector('.alert-danger');
+            const isErrorVisible = errorEl !== null && errorEl.clientHeight > 0;
+            const isSuccessText = document.body.innerText.includes('Detalles de la reserva');
+            return isSuccessText || isErrorVisible;
         }, { timeout: 15000 }).catch(() => { });
 
-        const isError = await page.evaluate(() => document.querySelector('.alert-danger') !== null);
+        const isError = await page.evaluate(() => {
+            const errorEl = document.querySelector('.alert-danger');
+            // Verifica que el error no sea un contenedor oculto
+            return errorEl !== null && errorEl.clientHeight > 0;
+        });
 
         if (!isError) {
             console.log('\n Se reservó');
