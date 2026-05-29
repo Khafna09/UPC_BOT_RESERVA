@@ -31,10 +31,10 @@ const COOKIE_PATH = './cookies.json';
     const browser = await puppeteer.launch({
         headless: "new",
         args: [
-            '--no-sandbox', 
-            '--disable-setuid-sandbox', 
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
-            '--lang=es-PE,es' 
+            '--lang=es-PE,es'
         ]
     });
 
@@ -59,7 +59,8 @@ const COOKIE_PATH = './cookies.json';
 
     try {
         console.log('[LOG] Accediendo a la plataforma...');
-        await page.goto('https://bibliotecareserva.upc.edu.pe/r/new', { waitUntil: 'networkidle2' });
+        // DOMContentLoaded es mucho más rápido que networkidle2
+        await page.goto('https://bibliotecareserva.upc.edu.pe/r/new', { waitUntil: 'domcontentloaded' });
 
         // Filtra a la sede de San Miguel, elije la opción de cubiculo y muestra de todas las áreas
         await page.waitForSelector('#s-lc-location', { visible: true });
@@ -71,10 +72,11 @@ const COOKIE_PATH = './cookies.json';
         // Cambia al dia que sigue (el que apenas se va a habilitar)
         await page.waitForSelector('.fc-next-button', { visible: true });
         await page.click('.fc-next-button');
-        await randomDelay(2000, 3000);
+        // Reducido a 1 segundo: Suficiente para que la grilla cambie de estado
+        await randomDelay(1000, 1500);
 
         // Selecciona el bloque de la hora objetivo (ej: 20:00) y el bloque de hora fin (ej: 22:00)
-        const horaInicio = process.env.HORA_INICIO; 
+        const horaInicio = process.env.HORA_INICIO;
         const horaFin = process.env.HORA_FIN.toLowerCase();
 
         let horaGringa = horaInicio;
@@ -84,13 +86,13 @@ const COOKIE_PATH = './cookies.json';
             let hi = parseInt(h);
             let ampm = hi >= 12 ? 'pm' : 'am';
             let h12 = hi % 12 || 12;
-            horaGringa = `${h12}:${m}${ampm}`; 
+            horaGringa = `${h12}:${m}${ampm}`;
             horaGringaEspacio = `${h12}:${m} ${ampm}`;
         }
 
         console.log(`[LOG] Escaneando disponibilidad de ${horaInicio}...`);
         await page.waitForSelector('.s-lc-eq-avail, .s-lc-eq-unavail', { timeout: 15000 });
-        
+
         const clickExitoso = await page.evaluate((h1, h2, h3) => {
             const contenedores = document.querySelectorAll('.fc-scroller, .table-responsive, div[style*="overflow"]');
             contenedores.forEach(c => c.scrollLeft = 9999);
@@ -111,7 +113,7 @@ const COOKIE_PATH = './cookies.json';
             throw new Error(`No hay disponibilidad de cubículos a las ${horaInicio}.`);
         }
 
-        await randomDelay(1000, 1500);
+        await randomDelay(500, 800);
         await page.evaluate((horaFinBuscada) => {
             const endSelect = document.querySelector('.b-end-date');
             if (endSelect) {
@@ -126,9 +128,9 @@ const COOKIE_PATH = './cookies.json';
             }
         }, horaFin);
 
-        await randomDelay(1000, 1500);
+        await randomDelay(500, 800);
         await Promise.all([
-            page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => { }),
+            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => { }),
             page.click('#submit_times')
         ]);
 
@@ -145,11 +147,10 @@ const COOKIE_PATH = './cookies.json';
             throw new Error("Sesión rechazada. Las cookies han caducado o el proveedor bloqueó el acceso.");
         }
 
-        // Si aparece la página de términos, es señal de que el 2FA fue aprobado exitosamente
         const isTermsPage = await page.$('#terms_accept') !== null;
         if (isTermsPage) {
             await Promise.all([
-                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => { }),
+                page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => { }),
                 page.click('#terms_accept')
             ]);
         }
@@ -163,11 +164,12 @@ const COOKIE_PATH = './cookies.json';
         await page.type('#q19110', process.env.COMPANERO_NOMBRE);
         await page.type('#q19111', process.env.COMPANERO_CODIGO);
 
-        await Promise.all([
-            page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => { }),
-            page.click('#btn-form-submit')
-        ]);
-        
+        await page.click('#btn-form-submit');
+
+        await page.waitForFunction(() => {
+            return document.querySelector('.alert-success') || document.querySelector('.alert-danger');
+        }, { timeout: 15000 }).catch(() => { });
+
         const isError = await page.evaluate(() => document.querySelector('.alert-danger') !== null);
 
         if (!isError) {
@@ -180,7 +182,7 @@ const COOKIE_PATH = './cookies.json';
 
     } catch (error) {
         console.error('\n[ERROR FATAL]', error.message);
-        if (page) await page.screenshot({ path: 'debug-ERROR-FINAL.png', fullPage: true }).catch(() => {});
+        if (page) await page.screenshot({ path: 'debug-ERROR-FINAL.png', fullPage: true }).catch(() => { });
     } finally {
         await browser.close();
     }
