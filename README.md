@@ -1,45 +1,84 @@
-# Sistema Automatizado de Reservas de Cubiculos
+# Sistema Automatizado de Reservas de Cubículos
 
-Desarrollo en Node.js mediante Puppeteer para la automatización total de reservas de cubículos de la sede de San Miguel UPC. Diseñado para funcionar en modo *Serverless* vía GitHub Actions, evadiendo restricciones de renderizado (scroll horizontal, Timezones) e implementando manejo de sesión con Bypass de Microsoft 2FA.
+> [!IMPORTANT]
+> **Aviso de Uso Educativo y Personal**
+> Este proyecto ha sido desarrollado exclusivamente con fines **educativos, de investigación y automatización personal** para optimizar la gestión de horarios en reservas de cubículos universitarios. 
+> 
+> El repositorio demuestra patrones avanzados de arquitectura *Serverless*, orquestación de tareas en la nube mediante Webhooks, sincronización temporal de alta precisión y reutilización segura de sesiones autenticadas por el propio usuario (Session Injection vía cookies). **No contiene credenciales ni secretos en su historial de versiones** y no promueve la vulneración no autorizada de sistemas informáticos.
 
+Desarrollo en **Node.js** utilizando **Puppeteer Stealth** para la automatización programada de reservas de cubículos de la sede San Miguel (UPC). Diseñado para ejecutarse en entorno *Serverless* mediante **GitHub Actions**, optimizando el manejo de renderizado en navegador headless, sincronización precisa de husos horarios y reutilización eficiente de sesión.
 
-## Características
-* **Timer:** Algoritmo de hibernación que sincroniza la ejecución con el reloj atómico del servidor para disparar el *payload* exactamente en el segundo 00:00:05.
-* **Session Injection:** Permite autenticar el bot en servidores CI/CD sin intervención humana almacenando el estado persistente del navegador en Secrets.
-* **External Triggering:** Uso de Webhooks (`repository_dispatch`) para evadir las colas globales de baja prioridad de GitHub Actions.
+---
+
+## Arquitectura y Diagrama de Flujo
+
+```mermaid
+graph TD
+    A[CronJob Externo / cron-job.org] -->|POST repository_dispatch| B[GitHub REST API]
+    B --> C[GitHub Actions Runner]
+    C --> D[Carga de Secrets: SAVED_COOKIES & Env Vars]
+    D --> E[Ejecución script Node.js / Puppeteer]
+    E --> F[Sincronización Temporal 00:00:05]
+    F --> G[Inyección de Cookies de Sesión]
+    G --> H[Navegación y Filtrado de Sede / Cubículo]
+    H --> I[Selección de Horario Objetivo]
+    I --> J[Procesamiento del Formulario de Registro]
+    J --> K{¿Reserva Confirmada?}
+    K -->|Éxito| L[Captura reserva-EXITO.png]
+    K -->|Fallo| M[Captura reserva-FALLIDA.png]
+    L --> N[Publicación de Artefactos GitHub Actions]
+    M --> N
+```
+
+---
+
+## Características Principales
+
+* **Timer de Alta Precisión:** Algoritmo de sincronización que calcula la diferencia horaria con la zona `America/Lima` para hibernar el proceso y gatillar la interacción exactamente en la ventana de habilitación (`00:00:05`).
+* **Session Injection (Reutilización de Sesión):** Inyección de cookies de sesión extraídas localmente tras la autenticación de dos factores (2FA), permitiendo la ejecución desatendida en entornos CI/CD sin exponer credenciales activas.
+* **Disparo Externo mediante Webhook:** Integración con `repository_dispatch` para omitir latencias y colas globales de baja prioridad en programaciones `cron` nativas de GitHub Actions.
+
+---
 
 ## Configuración del Entorno Local
 
-1. Instalar dependencias:
-  
+1. **Instalar dependencias:**
+   ```bash
    npm install
+   ```
 
-2. Clonar archivo de variables y reutilizar con credenciales a usar
+2. **Configurar variables de entorno:**
+   Copiar `.env.example` a `.env` e ingresar las variables necesarias:
+   ```bash
+   cp .env.example .env
+   ```
 
-3. Ejecutar el script generador de cookies. Esto abrirá un navegador Chromium. Inicia sesión normalmente y aprueba la solicitud 2FA en tu dispositivo móvil. Las cookies se guardarán en cookies.json
+3. **Generar cookies de sesión (Autenticación inicial):**
+   Ejecutar el script generador para abrir Chromium localmente, iniciar sesión y aprobar la verificación de dos factores (2FA) en tu dispositivo móvil. Las cookies se exportarán a `cookies.json`:
+   ```bash
+   node generate-cookies.js
+   ```
 
-    node generate-cookies.js
+4. **Despliegue en GitHub Actions:**
+   Ir a **Settings** (del repositorio) > **Secrets and variables** > **Actions** y crear los siguientes *Repository Secrets*:
+   - `UPC_CORREO` y `UPC_PASSWORD`
+   - `COMPANERO_NOMBRE` y `COMPANERO_CODIGO`
+   - `HORA_INICIO` (ej. `20:00`) y `HORA_FIN` (ej. `22:00`)
+   - `SAVED_COOKIES` (Copiar y pegar todo el contenido JSON generado en `cookies.json`).
 
-4. Despliegue en github Actions
-
-    Dirigirse a Settings (repositorio) > Secret and Variables > Actions
-    Crear los Repository Secrets
-
-    - UPC_CORREO, UPC_PASSWORD
-
-    - COMPANERO_NOMBRE, COMPANERO_CODIGO
-
-    - HORA_INICIO (ej. 20:00), HORA_FIN (ej. 22:00)
-
-    - SAVED_COOKIES (Pega todo el contenido del archivo cookies.json generado localmente).
-
-5. Configuración del Cronjob Externo (Debido a que programar una tarea de ejecución automática en github nos genera tardanzas debido a las colas usamos este sistema de "activación externa")
-
-    - Generar un Personal Access Token (Classic) en GitHub marcando el scope repo (se obtendrá un token)
-    - Crear una cuenta en cron-job.org.
-    - Crear un nuevo Job con los siguientes parámetros:
-        URL: https://api.github.com/repos/TU_USUARIO/REPOSITORIO/dispatches
-
-        Configurar la hora de activación a las 23:55 del día anterior a la activación **(ej: los horaios de reserva del día miercoles aparecen el dia martes a las 00:00:01 por lo que el horario del cron job debe activarse el día Lunes a las 23:55 para mantenerse en espera)**
-
-        En la seccion de Opciones Avanzadas configurar la zona horaria, cambiar al método POST, usar los Headers **Accept: application/vnd.github.v3+json** - **User-Agent: CronJob** - **Authorization: Bearer TOKEN GITHUB** - **Body: {"event_type": "trigger_reserva"}**
+5. **Configuración del Cronjob Externo (Webhooks):**
+   - Generar un **Personal Access Token (Classic)** en GitHub marcando el scope `repo`.
+   - Registrar una cuenta en [cron-job.org](https://cron-job.org).
+   - Crear un nuevo Job apuntando a:
+     ```http
+     POST https://api.github.com/repos/TU_USUARIO/REPOSITORIO/dispatches
+     ```
+   - **Headers requeridos:**
+     - `Accept: application/vnd.github.v3+json`
+     - `User-Agent: CronJob`
+     - `Authorization: Bearer <TU_GITHUB_TOKEN>`
+   - **Body (JSON):**
+     ```json
+     { "event_type": "trigger_reserva" }
+     ```
+   - Configurar la programación para ejecutarse 5 minutos antes de la ventana de apertura del sistema objetivo.
