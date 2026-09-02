@@ -76,41 +76,47 @@ const COOKIE_PATH = './cookies.json';
         await randomDelay(1000, 1500);
 
         // Selecciona el bloque de la hora objetivo (ej: 20:00) y el bloque de hora fin (ej: 22:00)
-        const horaInicio = process.env.HORA_INICIO;
-        const horaFin = process.env.HORA_FIN.toLowerCase();
+        const horaInicio = (process.env.HORA_INICIO || '').trim();
+        const horaFin = (process.env.HORA_FIN || '').trim().toLowerCase();
 
-        let horaGringa = horaInicio;
-        let horaGringaEspacio = horaInicio;
-        if (horaInicio.includes(":")) {
-            let [h, m] = horaInicio.split(":");
-            let hi = parseInt(h);
-            let ampm = hi >= 12 ? 'pm' : 'am';
-            let h12 = hi % 12 || 12;
-            horaGringa = `${h12}:${m}${ampm}`;
-            horaGringaEspacio = `${h12}:${m} ${ampm}`;
-        }
-
-        console.log(`[LOG] Escaneando disponibilidad de ${horaInicio}...`);
+        console.log(`[LOG] Buscando disponibilidad en la columna de las ${horaInicio}...`);
         await page.waitForSelector('.s-lc-eq-avail, .s-lc-eq-unavail', { timeout: 15000 });
 
-        const clickExitoso = await page.evaluate((h1, h2, h3) => {
-            const contenedores = document.querySelectorAll('.fc-scroller, .table-responsive, div[style*="overflow"]');
-            contenedores.forEach(c => c.scrollLeft = 9999);
+        const clickExitoso = await page.evaluate((horaBuscada) => {
+            // Busca la columna de fondo que tiene la hora exacta en su atributo
+            const bgSlots = Array.from(document.querySelectorAll('td.fc-timeline-slot[data-date]'));
+            const targetSlot = bgSlots.find(td => td.getAttribute('data-date').endsWith(`T${horaBuscada}:00`));
 
-            const bloques = document.querySelectorAll('a.s-lc-eq-avail');
-            for (let b of bloques) {
-                const titulo = (b.getAttribute('title') || '').toLowerCase();
-                if (titulo.includes(h1) || titulo.includes(h2) || titulo.includes(h3)) {
-                    b.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
-                    b.click();
-                    return true;
+            if (!targetSlot) return false; // La hora no existe en la tabla
+
+            // Mide matemáticamente cuántos píxeles hay desde la izquierda (Ej: 1470px)
+            const targetLeftOffset = targetSlot.offsetLeft;
+
+            // Buscar todos los contenedores de los cubículos
+            const harnesses = Array.from(document.querySelectorAll('.fc-timeline-event-harness'));
+            
+            for (let harness of harnesses) {
+                // Extraer el valor de la izquierda para la selección
+                const leftValue = parseInt(harness.style.left, 10);
+
+                // Si la caja está alineada en la misma columna de píxeles
+                if (Math.abs(leftValue - targetLeftOffset) <= 2) {
+                    
+                    // Verificamos si este recuadro específico es verde (disponible)
+                    const botonVerde = harness.querySelector('a.s-lc-eq-avail');
+                    if (botonVerde) {
+                        botonVerde.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+                        botonVerde.click();
+                        return true;
+                    }
                 }
             }
+            // Si terminó de escanear la columna y no halló verdes, retorna false
             return false;
-        }, horaInicio, horaGringa, horaGringaEspacio);
+        }, horaInicio);
 
         if (!clickExitoso) {
-            throw new Error(`No hay disponibilidad de cubículos a las ${horaInicio}.`);
+            throw new Error(`[ALERTA] No hay disponibilidad de cubículos a las ${horaInicio}.`);
         }
 
         await randomDelay(500, 800);
