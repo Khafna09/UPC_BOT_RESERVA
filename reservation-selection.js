@@ -69,7 +69,7 @@ function selectReservationStart(horaBuscada, horaFinBuscada) {
 
         for (const harness of lane.querySelectorAll('.fc-timeline-event-harness')) {
             if (clickIfAvailable(harness)) {
-                return { resourceId, preferred: true, end };
+                return { resourceId, resourceName: resourcesById.get(resourceId)?.title || resourceId, preferred: true, end };
             }
         }
     }
@@ -81,7 +81,7 @@ function selectReservationStart(horaBuscada, horaFinBuscada) {
         if (resourcesById.get(resourceId)?.capacity !== 6 || !coversInterval(resourceId)) continue;
 
         if (clickIfAvailable(harness)) {
-            return { resourceId, preferred: false, end };
+            return { resourceId, resourceName: resourcesById.get(resourceId)?.title || resourceId, preferred: false, end };
         }
     }
 

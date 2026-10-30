@@ -59,7 +59,7 @@ const COOKIE_PATH = './cookies.json';
     }
 
     try {
-        console.log('[LOG] Accediendo a la plataforma...');
+        console.log('[LOG] Cargando grilla de cubículos de San Miguel (todos los pisos y capacidades)...');
         // DOMContentLoaded es mucho más rápido que networkidle2
         // Vista pública de San Miguel, cubículos de todas las capacidades y pisos.
         // Evita navegar por filtros separados para cada preferencia.
@@ -67,6 +67,7 @@ const COOKIE_PATH = './cookies.json';
 
         // Cambia al dia que sigue (el que apenas se va a habilitar)
         await page.waitForSelector('.fc-next-button', { visible: true });
+        console.log('[LOG] Cargando disponibilidad del día siguiente...');
         await page.click('.fc-next-button');
         // Reducido a 1 segundo: Suficiente para que la grilla cambie de estado
         await randomDelay(1000, 1500);
@@ -75,7 +76,8 @@ const COOKIE_PATH = './cookies.json';
         const horaInicio = (process.env.HORA_INICIO || '').trim();
         const horaFin = (process.env.HORA_FIN || '').trim().toLowerCase();
 
-        console.log(`[LOG] Buscando disponibilidad en la columna de las ${horaInicio}...`);
+        console.log(`[LOG] Evaluando el intervalo completo ${horaInicio}–${horaFin}. Prioridad: 10 → 09 → 11 → 38 → 39; después, respaldo de 6 personas.`);
+        console.log('[LOG] Selección por fila del recurso y posición horizontal del bloque de inicio; duración validada con los eventos de la grilla.');
         await page.waitForSelector('.s-lc-eq-avail, .s-lc-eq-unavailable', { timeout: 15000 });
 
         const clickExitoso = await page.evaluate(selectReservationStart, horaInicio, horaFin);
@@ -83,7 +85,7 @@ const COOKIE_PATH = './cookies.json';
         if (!clickExitoso) {
             throw new Error(`[ALERTA] No hay disponibilidad de cubículos para el intervalo completo ${horaInicio}–${horaFin} (formato HH:mm).`);
         }
-        console.log(`[LOG] Cubículo seleccionado: ${clickExitoso.resourceId} (${clickExitoso.preferred ? 'preferencia' : 'respaldo de 6 personas'}).`);
+        console.log(`[LOG] Seleccionado: ${clickExitoso.resourceName} [${clickExitoso.resourceId}] | ${clickExitoso.preferred ? 'preferencia' : 'respaldo de 6 personas'} | ${horaInicio}–${horaFin}.`);
 
         await page.waitForSelector('.b-end-date', { visible: true, timeout: 15000 });
         const finSeleccionado = await page.evaluate(selectReservationEnd, clickExitoso.end);
@@ -92,13 +94,15 @@ const COOKIE_PATH = './cookies.json';
         }
 
         // El cambio de duración es AJAX: continuar solo cuando el servidor lo confirme.
+        console.log('[LOG] Esperando confirmación de la duración por la plataforma...');
         await page.waitForFunction(isReservationEndReady, { timeout: 15000 }, clickExitoso.end);
+        console.log(`[LOG] Intervalo completo ${horaInicio}–${horaFin} confirmado en la selección pendiente. Continuando con la reserva...`);
         await Promise.all([
             page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => { }),
             page.click('#submit_times')
         ]);
 
-        // Validación de aprobación 2FA (Microsoft Authenticator)
+        // Validación de sesión y acceso al formulario de reserva.
         await page.waitForFunction(() => {
             const form = document.querySelector('#q18288');
             const btnTerms = document.querySelector('#terms_accept');
@@ -120,7 +124,7 @@ const COOKIE_PATH = './cookies.json';
         }
 
         // Validación de acceso a formulario final
-        console.log('[LOG] Procesando payload final...');
+        console.log('[LOG] Completando el formulario final de reserva...');
         await page.waitForSelector('#q18288', { visible: true, timeout: 15000 });
         await page.select('#q18288', 'San Miguel');
         await page.select('#q18305', 'Pregrado');
@@ -128,6 +132,7 @@ const COOKIE_PATH = './cookies.json';
         await page.type('#q19110', process.env.COMPANERO_NOMBRE);
         await page.type('#q19111', process.env.COMPANERO_CODIGO);
 
+        console.log('[LOG] Enviando el formulario de reserva...');
         await page.click('#btn-form-submit');
 
         await page.waitForFunction(() => {
@@ -144,10 +149,10 @@ const COOKIE_PATH = './cookies.json';
         });
 
         if (!isError) {
-            console.log('\n Se reservó');
+            console.log('\n[LOG] Envío finalizado sin errores visibles. Revisar los detalles de la reserva en reserva-EXITO.png.');
             await page.screenshot({ path: 'reserva-EXITO.png', fullPage: true });
         } else {
-            console.log('\n No se pudo reservar. Es probable que el sistema haya rechazado la solicitud o que el bloque ya no esté disponible.');
+            console.log('\n[ERROR] La plataforma mostró un error después del envío. Revisar reserva-FALLIDA.png.');
             await page.screenshot({ path: 'reserva-FALLIDA.png', fullPage: true });
         }
 
