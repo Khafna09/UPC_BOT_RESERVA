@@ -40,6 +40,38 @@ graph TD
 
 ---
 
+## Prioridad de cubículos
+
+La selección intenta este orden, siempre para **todo el intervalo entre `HORA_INICIO` y `HORA_FIN`**:
+
+| Prioridad | Cubículo | Pabellón / piso | Capacidad |
+| --- | --- | --- | --- |
+| 1 | 10 | A / 2 | 5 personas |
+| 2 | 09 | A / 2 | 5 personas |
+| 3 | 11 | A / 2 | 5 personas |
+| 4 | 38 | A / 3 | 4 personas |
+| 5 | 39 | A / 3 | 6 personas |
+
+Si ninguna preferencia cubre el intervalo completo, se usa el criterio anterior: el primer cubículo disponible de **6 personas**, en el orden de la grilla. El respaldo también debe cubrir todo el intervalo. No se amplía el respaldo a otros cubículos de 4 o 5 personas.
+
+Se abre directamente la vista de disponibilidad de San Miguel con todas las capacidades y zonas (`capacity=0&zone=0`). La prioridad se calcula sobre los datos y filas que ya carga esa vista, sin consultas adicionales por cubículo. Se mantienen el día objetivo, la sesión y el formulario final. La duración debe aparecer como opción exacta y quedar confirmada por la respuesta AJAX antes de continuar; si no, el bot se detiene sin enviar una reserva más corta.
+
+Los horarios usan `HH:mm`, por ejemplo `20:00` y `22:00`. `00:00` como final representa la medianoche al terminar el día visible.
+
+### Verificación y prueba manual
+
+```bash
+node --check index.js
+node --check reservation-selection.js
+npm test
+```
+
+Las pruebas usan Chromium con una grilla local simulada: no necesitan cookies ni crean reservas. Cubren cada preferencia, el respaldo, intervalos incompletos, filas ausentes y la confirmación de la hora final.
+
+Para la prueba real en GitHub: **Actions → Bot de Reservas UPC → Run workflow → elegir `codex/prioridad-cubiculos`**. Los secretos existentes se reutilizan. Revisar el cubículo seleccionado en el registro y la captura del artefacto `evidencias-ejecucion`. Esta ejecución manual sí realiza la reserva usando el flujo habitual.
+
+---
+
 ## Configuración del Entorno Local
 
 1. **Instalar dependencias:**

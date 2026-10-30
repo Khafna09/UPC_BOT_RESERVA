@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "cookies": "node generate-cookies.js"
+    "cookies": "node generate-cookies.js",
+    "test": "node --test"
   },
   "keywords": [
     "puppeteer",

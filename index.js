@@ -2,6 +2,7 @@ require('dotenv').config();
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const fs = require('fs');
+const { selectReservationStart, selectReservationEnd, isReservationEndReady } = require('./reservation-selection');
 puppeteer.use(StealthPlugin());
 
 const randomDelay = (min, max) => new Promise(r => setTimeout(r, Math.floor(Math.random() * (max - min + 1) + min)));
@@ -60,14 +61,9 @@ const COOKIE_PATH = './cookies.json';
     try {
         console.log('[LOG] Accediendo a la plataforma...');
         // DOMContentLoaded es mucho más rápido que networkidle2
-        await page.goto('https://bibliotecareserva.upc.edu.pe/r/new', { waitUntil: 'domcontentloaded' });
-
-        // Filtra a la sede de San Miguel, elije la opción de cubiculo y muestra de todas las áreas
-        await page.waitForSelector('#s-lc-location', { visible: true });
-        await page.select('#s-lc-location', '15560'); // San Miguel
-        await page.select('#s-lc-group', '33848');   // Grupo
-        await page.select('#s-lc-type', '3');        // Cubículo
-        await page.click('#s-lc-go');
+        // Vista pública de San Miguel, cubículos de todas las capacidades y pisos.
+        // Evita navegar por filtros separados para cada preferencia.
+        await page.goto('https://bibliotecareserva.upc.edu.pe/r/new/availability?lid=15560&gid=33848&zone=0&capacity=0', { waitUntil: 'domcontentloaded' });
 
         // Cambia al dia que sigue (el que apenas se va a habilitar)
         await page.waitForSelector('.fc-next-button', { visible: true });
@@ -80,61 +76,23 @@ const COOKIE_PATH = './cookies.json';
         const horaFin = (process.env.HORA_FIN || '').trim().toLowerCase();
 
         console.log(`[LOG] Buscando disponibilidad en la columna de las ${horaInicio}...`);
-        await page.waitForSelector('.s-lc-eq-avail, .s-lc-eq-unavail', { timeout: 15000 });
+        await page.waitForSelector('.s-lc-eq-avail, .s-lc-eq-unavailable', { timeout: 15000 });
 
-        const clickExitoso = await page.evaluate((horaBuscada) => {
-            // Busca la columna de fondo que tiene la hora exacta en su atributo
-            const bgSlots = Array.from(document.querySelectorAll('td.fc-timeline-slot[data-date]'));
-            const targetSlot = bgSlots.find(td => td.getAttribute('data-date').endsWith(`T${horaBuscada}:00`));
-
-            if (!targetSlot) return false; // La hora no existe en la tabla
-
-            // Mide matemáticamente cuántos píxeles hay desde la izquierda (Ej: 1470px)
-            const targetLeftOffset = targetSlot.offsetLeft;
-
-            // Buscar todos los contenedores de los cubículos
-            const harnesses = Array.from(document.querySelectorAll('.fc-timeline-event-harness'));
-            
-            for (let harness of harnesses) {
-                // Extraer el valor de la izquierda para la selección
-                const leftValue = parseInt(harness.style.left, 10);
-
-                // Si la caja está alineada en la misma columna de píxeles
-                if (Math.abs(leftValue - targetLeftOffset) <= 2) {
-                    
-                    // Verificamos si este recuadro específico es verde (disponible)
-                    const botonVerde = harness.querySelector('a.s-lc-eq-avail');
-                    if (botonVerde) {
-                        botonVerde.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
-                        botonVerde.click();
-                        return true;
-                    }
-                }
-            }
-            // Si terminó de escanear la columna y no halló verdes, retorna false
-            return false;
-        }, horaInicio);
+        const clickExitoso = await page.evaluate(selectReservationStart, horaInicio, horaFin);
 
         if (!clickExitoso) {
-            throw new Error(`[ALERTA] No hay disponibilidad de cubículos a las ${horaInicio}.`);
+            throw new Error(`[ALERTA] No hay disponibilidad de cubículos para el intervalo completo ${horaInicio}–${horaFin} (formato HH:mm).`);
+        }
+        console.log(`[LOG] Cubículo seleccionado: ${clickExitoso.resourceId} (${clickExitoso.preferred ? 'preferencia' : 'respaldo de 6 personas'}).`);
+
+        await page.waitForSelector('.b-end-date', { visible: true, timeout: 15000 });
+        const finSeleccionado = await page.evaluate(selectReservationEnd, clickExitoso.end);
+        if (!finSeleccionado) {
+            throw new Error(`[ALERTA] La plataforma no permite terminar a las ${horaFin}; se cancela para evitar una reserva más corta.`);
         }
 
-        await randomDelay(500, 800);
-        await page.evaluate((horaFinBuscada) => {
-            const endSelect = document.querySelector('.b-end-date');
-            if (endSelect) {
-                for (let i = 0; i < endSelect.options.length; i++) {
-                    const text = endSelect.options[i].text.toLowerCase();
-                    if (text.includes(horaFinBuscada) || text.replace(/\s+/g, '').includes(horaFinBuscada.replace(/\s+/g, ''))) {
-                        endSelect.selectedIndex = i;
-                        endSelect.dispatchEvent(new Event('change', { bubbles: true }));
-                        break;
-                    }
-                }
-            }
-        }, horaFin);
-
-        await randomDelay(500, 800);
+        // El cambio de duración es AJAX: continuar solo cuando el servidor lo confirme.
+        await page.waitForFunction(isReservationEndReady, { timeout: 15000 }, clickExitoso.end);
         await Promise.all([
             page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => { }),
             page.click('#submit_times')
